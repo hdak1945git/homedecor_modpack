@@ -48,9 +48,14 @@ facedir[1] = {x = 1, y = 0, z = 0}
 facedir[2] = {x = 0, y = 0, z = -1}
 facedir[3] = {x = -1, y = 0, z = 0}
 
+local is_itemframe = function(node)
+	return node.name == "itemframes:frame" or
+		node.name == "itemframes:frame_public"
+end
+
 local remove_item = function(pos, node)
 	local objs = nil
-	if node.name == "itemframes:frame" then
+	if is_itemframe(node) then
 		objs = minetest.get_objects_inside_radius(pos, .5)
 	elseif node.name == "itemframes:pedestal" then
 		objs = minetest.get_objects_inside_radius({x=pos.x,y=pos.y+1,z=pos.z}, .5)
@@ -68,7 +73,7 @@ local update_item = function(pos, node)
 	remove_item(pos, node)
 	local meta = minetest.get_meta(pos)
 	if meta:get_string("item") ~= "" then
-		if node.name == "itemframes:frame" then
+		if is_itemframe(node) then
 			local posad = facedir[node.param2]
 			if not posad then return end
 			pos.x = pos.x + posad.x * 6.5 / 16
@@ -80,7 +85,7 @@ local update_item = function(pos, node)
 		tmp.nodename = node.name
 		tmp.texture = ItemStack(meta:get_string("item")):get_name()
 		local e = minetest.add_entity(pos,"itemframes:item")
-		if node.name == "itemframes:frame" then
+		if is_itemframe(node) then
 			local yaw = math.pi * 2 - node.param2 * math.pi / 2
 			e:setyaw(yaw)
 		end
@@ -90,7 +95,7 @@ end
 local drop_item = function(pos, node)
 	local meta = minetest.get_meta(pos)
 	if meta:get_string("item") ~= "" then
-		if node.name == "itemframes:frame" then
+		if is_itemframe(node) then
 			minetest.add_item(pos, meta:get_string("item"))
 		elseif node.name == "itemframes:pedestal" then
 			minetest.add_item({x=pos.x,y=pos.y+1,z=pos.z}, meta:get_string("item"))
@@ -100,27 +105,43 @@ local drop_item = function(pos, node)
 	remove_item(pos, node)
 end
 
-minetest.register_node("itemframes:frame",{
+local register_itemframe = function(node_name, node_prop)
+	local new_frame = {
+		drawtype = "nodebox",
+		node_box = {
+			type = "fixed",
+			fixed = {-0.5, -0.5, 7/16, 0.5, 0.5, 0.5}
+		},
+		selection_box = {
+			type = "fixed",
+			fixed = {-0.5, -0.5, 7/16, 0.5, 0.5, 0.5}
+		},
+		paramtype = "light",
+		paramtype2 = "facedir",
+		sunlight_propagates = true,
+		groups = {choppy = 2, dig_immediate = 2},
+		legacy_wallmounted = true,
+		sounds = default.node_sound_defaults(),
+		on_rotate = screwdriver.disallow,
+		on_destruct = function(pos)
+			local meta = minetest.get_meta(pos)
+			local node = minetest.get_node(pos)
+			if meta:get_string("item") ~= "" then
+				drop_item(pos, node)
+			end
+		end,
+	}
+	for k, v in pairs(node_prop) do
+		new_frame[k] = v
+	end
+	minetest.register_node(node_name, new_frame)
+end
+
+register_itemframe("itemframes:frame",{
 	description = S("Item frame"),
-	drawtype = "nodebox",
-	node_box = {
-		type = "fixed",
-		fixed = {-0.5, -0.5, 7/16, 0.5, 0.5, 0.5}
-	},
-	selection_box = {
-		type = "fixed",
-		fixed = {-0.5, -0.5, 7/16, 0.5, 0.5, 0.5}
-	},
 	tiles = {"itemframes_frame.png"},
 	inventory_image = "itemframes_frame.png",
 	wield_image = "itemframes_frame.png",
-	paramtype = "light",
-	paramtype2 = "facedir",
-	sunlight_propagates = true,
-	groups = {choppy = 2, dig_immediate = 2},
-	legacy_wallmounted = true,
-	sounds = default.node_sound_defaults(),
-	on_rotate = screwdriver.disallow,
 	after_place_node = function(pos, placer, itemstack)
 		local meta = minetest.get_meta(pos)
 		meta:set_string("owner",placer:get_player_name())
@@ -154,12 +175,33 @@ minetest.register_node("itemframes:frame",{
 		return name == meta:get_string("owner") or
 				minetest.check_player_privs(name, "protection_bypass")
 	end,
-	on_destruct = function(pos)
+})
+
+
+register_itemframe("itemframes:frame_public",{
+	description = S("Public Item frame"),
+	tiles = {"itemframes_frame_public.png"},
+	inventory_image = "itemframes_frame_public.png",
+	wield_image = "itemframes_frame_public.png",
+	after_place_node = function(pos, placer, itemstack)
 		local meta = minetest.get_meta(pos)
-		local node = minetest.get_node(pos)
-		if meta:get_string("item") ~= "" then
-			drop_item(pos, node)
-		end
+		meta:set_string("infotext", "Public Item frame")
+	end,
+	on_rightclick = function(pos, node, clicker, itemstack)
+		if not itemstack then return end
+		local meta = minetest.get_meta(pos)
+		drop_item(pos,node)
+		local s = itemstack:take_item()
+		meta:set_string("item",s:to_string())
+		update_item(pos,node)
+		return itemstack
+	end,
+	on_punch = function(pos,node,puncher)
+		local meta = minetest.get_meta(pos)
+		drop_item(pos, node)
+	end,
+	can_dig = function(pos,player)
+		return true
 	end,
 })
 
@@ -230,13 +272,14 @@ minetest.register_node("itemframes:pedestal",{
 -- due to /clearobjects or similar
 
 minetest.register_abm({
-	nodenames = {"itemframes:frame", "itemframes:pedestal"},
+	nodenames = {
+		"itemframes:frame", "itemframes:frame_public", "itemframes:pedestal"
+	},
 	interval = 15,
 	chance = 1,
 	action = function(pos, node, active_object_count, active_object_count_wider)
 		local num
-
-		if node.name == "itemframes:frame" then
+		if is_itemframe(node) then
 			num = #minetest.get_objects_inside_radius(pos, 0.5)
 		elseif node.name == "itemframes:pedestal" then
 			pos.y = pos.y + 1
@@ -261,6 +304,15 @@ minetest.register_craft({
 })
 
 minetest.register_craft({
+	output = 'itemframes:frame_public',
+	recipe = {
+		{'group:wood', 'group:stick', 'dye:dark_grey'},
+		{'group:stick', 'default:paper', 'default:stick'},
+		{'dye:dark_grey', 'group:stick', 'group:wood'},
+	}
+})
+
+minetest.register_craft({
 	output = 'itemframes:pedestal',
 	recipe = {
 		{'default:stone', 'default:stone', 'default:stone'},
@@ -272,5 +324,6 @@ minetest.register_craft({
 -- stop mesecon pistons from pushing itemframes and pedestals
 if minetest.get_modpath("mesecons_mvps") then
 	mesecon.register_mvps_stopper("itemframes:frame")
+	mesecon.register_mvps_stopper("itemframes:frame_public")
 	mesecon.register_mvps_stopper("itemframes:pedestal")
 end
